@@ -19,7 +19,13 @@ function Controls() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ref = useRef<any>(null)
   useEffect(() => {
-    if (ref.current) ref.current.setGizmosVisible(false)
+    if (!ref.current) return
+    ref.current.setGizmosVisible(false)
+    // Null the scene reference so ArcballControls uses a pure unit-sphere arcball
+    // instead of raycasting interior brain meshes for its grab-point calculation.
+    // Without this, DoubleSide interior meshes confuse the grab point and rotation
+    // no longer tracks the cursor correctly.
+    ref.current._scene = null
   }, [])
   return (
     <ArcballControls

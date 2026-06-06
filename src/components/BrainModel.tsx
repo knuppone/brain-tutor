@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react'
+import { useMemo, useEffect, Suspense } from 'react'
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { useLoader } from '@react-three/fiber'
@@ -191,111 +191,96 @@ function BrainCortex() {
   )
 }
 
-// ── Cerebellum geometry (procedural, visually OK for a rear structure) ────────
+// ── Real mesh definitions ─────────────────────────────────────────────────────
 
-function buildCerebellumGeometry() {
-  const geo = new THREE.IcosahedronGeometry(1.0, 4)
-  const pos = geo.attributes.position as THREE.BufferAttribute
-  for (let i = 0; i < pos.count; i++) {
-    const ox = pos.getX(i), oy = pos.getY(i), oz = pos.getZ(i)
-    let x = ox * 0.38, y = oy * 0.22, z = oz * 0.28
-    // Simple noise for folia-like texture
-    const n = Math.sin(ox * 12.3 + oy * 7.8 + oz * 9.1) * 0.035
-    const len = Math.sqrt(x * x + y * y + z * z)
-    x += (x / len) * n; y += (y / len) * n; z += (z / len) * n
-    pos.setXYZ(i, x, y, z)
-  }
-  geo.computeVertexNormals()
-  return geo
-}
-
-// ── Subcortical & external structures ────────────────────────────────────────
-
-const SPHERE_GEO = new THREE.SphereGeometry(0.5, 32, 24)
-const CYLINDER_GEO = new THREE.CylinderGeometry(0.5, 0.38, 1, 20)
-let CEREBELLUM_GEO: THREE.BufferGeometry | null = null
-
-interface SubInstance {
+interface RealMeshDef {
   regionId: string
-  position: [number, number, number]
-  scale: [number, number, number]
-  geoType?: 'sphere' | 'cylinder' | 'cerebellum'
+  objPath: string
 }
 
-// Positions tuned for normalized OBJ brain occupying roughly:
-//   X: ±0.36, Y: −0.45 (inferior) to +0.45 (superior), Z: −0.34 (posterior) to +0.34 (anterior)
-const SUB_INSTANCES: SubInstance[] = [
-  // External structures (always visible)
-  { regionId: 'cerebellum',  position: [0,    -0.38, -0.50], scale: [0.85, 0.65, 0.70],  geoType: 'cerebellum' },
-  { regionId: 'brainstem',   position: [0,    -0.60, -0.22], scale: [0.14, 0.34, 0.14],  geoType: 'cylinder' },
+const REAL_MESH_DEFS: RealMeshDef[] = [
+  // Exterior structures (visible even with opaque cortex)
+  { regionId: 'cerebellum',     objPath: '/models/cerebellum.obj'       },
+  { regionId: 'brainstem',      objPath: '/models/brainstem.obj'        },
+  { regionId: 'olfactory-bulb', objPath: '/models/olfactory-bulb-l.obj' },
+  { regionId: 'olfactory-bulb', objPath: '/models/olfactory-bulb-r.obj' },
 
-  // Interior structures (visible when cortex goes transparent)
-  { regionId: 'thalamus',        position: [0,     0.02, -0.04], scale: [0.16, 0.11, 0.18] },
-  { regionId: 'hippocampus',     position: [-0.17,-0.10, -0.04], scale: [0.10, 0.06, 0.20] },
-  { regionId: 'hippocampus',     position: [ 0.17,-0.10, -0.04], scale: [0.10, 0.06, 0.20] },
-  { regionId: 'amygdala',        position: [-0.20,-0.12,  0.16], scale: [0.08, 0.08, 0.08] },
-  { regionId: 'amygdala',        position: [ 0.20,-0.12,  0.16], scale: [0.08, 0.08, 0.08] },
-  { regionId: 'hypothalamus',    position: [0,    -0.16,  0.08], scale: [0.08, 0.06, 0.08] },
-  { regionId: 'basal-ganglia',   position: [-0.14, 0.04,  0.06], scale: [0.11, 0.12, 0.13] },
-  { regionId: 'basal-ganglia',   position: [ 0.14, 0.04,  0.06], scale: [0.11, 0.12, 0.13] },
-  { regionId: 'corpus-callosum', position: [0,     0.14,  0.00], scale: [0.30, 0.04, 0.24] },
-  { regionId: 'insular-cortex',  position: [-0.36, 0.02,  0.05], scale: [0.08, 0.15, 0.16] },
-  { regionId: 'insular-cortex',  position: [ 0.36, 0.02,  0.05], scale: [0.08, 0.15, 0.16] },
-  { regionId: 'pituitary',       position: [0,    -0.28,  0.12], scale: [0.05, 0.05, 0.05] },
-  { regionId: 'pineal-gland',    position: [0,     0.02, -0.12], scale: [0.035,0.035,0.035] },
-  { regionId: 'ventricles',      position: [0,     0.06, -0.02], scale: [0.17, 0.11, 0.24] },
-  { regionId: 'olfactory-bulb',  position: [-0.09,-0.18,  0.38], scale: [0.07, 0.05, 0.07] },
-  { regionId: 'olfactory-bulb',  position: [ 0.09,-0.18,  0.38], scale: [0.07, 0.05, 0.07] },
+  // Interior structures (visible when cortex goes transparent on selection)
+  { regionId: 'thalamus',       objPath: '/models/thalamus-l.obj'       },
+  { regionId: 'thalamus',       objPath: '/models/thalamus-r.obj'       },
+  { regionId: 'hippocampus',    objPath: '/models/hippocampus-l.obj'    },
+  { regionId: 'hippocampus',    objPath: '/models/hippocampus-r.obj'    },
+  { regionId: 'amygdala',       objPath: '/models/amygdala-l.obj'       },
+  { regionId: 'amygdala',       objPath: '/models/amygdala-r.obj'       },
+  { regionId: 'basal-ganglia',  objPath: '/models/basal-ganglia-l.obj'  },
+  { regionId: 'basal-ganglia',  objPath: '/models/basal-ganglia-r.obj'  },
+  { regionId: 'insular-cortex', objPath: '/models/insular-cortex-l.obj' },
+  { regionId: 'insular-cortex', objPath: '/models/insular-cortex-r.obj' },
+  { regionId: 'corpus-callosum', objPath: '/models/corpus-callosum.obj' },
+  { regionId: 'hypothalamus',   objPath: '/models/hypothalamus.obj'     },
+  { regionId: 'ventricles',     objPath: '/models/ventricles.obj'       },
+  { regionId: 'pituitary',      objPath: '/models/pituitary.obj'        },
+  { regionId: 'pineal-gland',   objPath: '/models/pineal-gland.obj'     },
 ]
 
-interface SubMeshProps {
-  inst: SubInstance
+// ── SubOBJMesh component ──────────────────────────────────────────────────────
+
+interface SubOBJMeshProps {
+  def: RealMeshDef
   isHovered: boolean
   isSelected: boolean
   isDimmed: boolean
 }
 
-function SubMesh({ inst, isHovered, isSelected, isDimmed }: SubMeshProps) {
+function SubOBJMesh({ def, isHovered, isSelected, isDimmed }: SubOBJMeshProps) {
   const setHovered = useBrainStore(s => s.setHovered)
   const setSelected = useBrainStore(s => s.setSelected)
-  const region = regionsById[inst.regionId]
+  const region = regionsById[def.regionId]
 
-  const mat = useMemo(() => {
-    return new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color(region?.color ?? '#888888'),
-      roughness: 0.40,
-      metalness: 0.02,
-      clearcoat: 0.15,
-      clearcoatRoughness: 0.35,
-      transparent: isDimmed,
-      opacity: isDimmed ? 0.13 : 0.95,
-      depthWrite: !isDimmed,
-      emissive: isSelected
-        ? new THREE.Color('#a78bfa')
-        : isHovered
-        ? new THREE.Color('#c4b5fd')
-        : new THREE.Color('#000000'),
-      emissiveIntensity: isSelected ? 0.45 : isHovered ? 0.22 : 0,
+  const obj = useLoader(OBJLoader, def.objPath)
+
+  const geo = useMemo(() => {
+    const geos: THREE.BufferGeometry[] = []
+    obj.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        geos.push((child as THREE.Mesh).geometry.clone())
+      }
     })
-  }, [region, isDimmed, isSelected, isHovered])
+    if (geos.length === 0) throw new Error(`No mesh in ${def.objPath}`)
+    const merged = geos.length > 1 ? mergeGeometries(geos) : geos[0]
+    if (geos.length > 1) geos.forEach(g => g.dispose())
+    merged.computeVertexNormals()
+    return merged
+  }, [obj, def.objPath])
 
-  let geo: THREE.BufferGeometry = SPHERE_GEO
-  if (inst.geoType === 'cylinder') geo = CYLINDER_GEO
-  else if (inst.geoType === 'cerebellum') {
-    if (!CEREBELLUM_GEO) CEREBELLUM_GEO = buildCerebellumGeometry()
-    geo = CEREBELLUM_GEO
-  }
+  useEffect(() => () => { geo.dispose() }, [geo])
+
+  const mat = useMemo(() => new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(region?.color ?? '#888888'),
+    roughness: 0.40,
+    metalness: 0.02,
+    clearcoat: 0.15,
+    clearcoatRoughness: 0.35,
+    transparent: isDimmed,
+    opacity: isDimmed ? 0.13 : 0.95,
+    depthWrite: !isDimmed,
+    side: THREE.DoubleSide,
+    emissive: isSelected
+      ? new THREE.Color('#a78bfa')
+      : isHovered
+      ? new THREE.Color('#c4b5fd')
+      : new THREE.Color('#000000'),
+    emissiveIntensity: isSelected ? 0.45 : isHovered ? 0.22 : 0,
+  }), [region, isDimmed, isSelected, isHovered])
 
   return (
     <mesh
-      position={inst.position}
-      scale={inst.scale}
       geometry={geo}
       material={mat}
       renderOrder={isDimmed ? 0 : 2}
       onPointerOver={(e) => {
         e.stopPropagation()
-        setHovered(inst.regionId)
+        setHovered(def.regionId)
         document.body.style.cursor = 'pointer'
       }}
       onPointerOut={(e) => {
@@ -305,11 +290,13 @@ function SubMesh({ inst, isHovered, isSelected, isDimmed }: SubMeshProps) {
       }}
       onClick={(e) => {
         e.stopPropagation()
-        setSelected(inst.regionId, false)
+        setSelected(def.regionId, false)
       }}
     />
   )
 }
+
+// ── BrainModel ────────────────────────────────────────────────────────────────
 
 export function BrainModel() {
   const hoveredId = useBrainStore(s => s.hoveredRegionId)
@@ -318,19 +305,23 @@ export function BrainModel() {
   return (
     <group>
       <BrainCortex />
-      {SUB_INSTANCES.map((inst, idx) => {
-        const isSelected = selectedId === inst.regionId
+      {REAL_MESH_DEFS.map((def, idx) => {
+        const isSelected = selectedId === def.regionId
         const isDimmed = selectedId !== null && !isSelected
         return (
-          <SubMesh
-            key={idx}
-            inst={inst}
-            isHovered={hoveredId === inst.regionId}
-            isSelected={isSelected}
-            isDimmed={isDimmed}
-          />
+          <Suspense key={idx} fallback={null}>
+            <SubOBJMesh
+              def={def}
+              isHovered={hoveredId === def.regionId}
+              isSelected={isSelected}
+              isDimmed={isDimmed}
+            />
+          </Suspense>
         )
       })}
     </group>
   )
 }
+
+// Preload all sub-structure OBJs at module load time
+REAL_MESH_DEFS.forEach(def => useLoader.preload(OBJLoader, def.objPath))
